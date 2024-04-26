@@ -1,0 +1,9 @@
+# HoloSupa Scraper 
+
+A quick and dirty R Shiny app that parses a YouTube URL for a video ID, then scrapes Hololyzer for superchats for the specific video. Shoutout to the Hololyzer dev(s) for an amazing site with a lot of data, they're the inspiration for this (alongside wanting more practice with Regex, R, and Shiny) as well as the source of the superchats!
+
+I'd like to get more practice with scraping more sites with better packages like Selenium, so I'll try to update this in the future to scrape directly from YouTube (to reduce traffic + server load on Hololyzer, though with the scale of this project it should hopefully still be negligible), and also add plotly visualizations in the near future.
+
+## Screenshot
+
+<img src="https://github.com/wattyven/holosupa-scraper/blob/main/HoloSupaScraper.png"/>
