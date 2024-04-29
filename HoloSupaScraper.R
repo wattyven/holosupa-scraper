@@ -92,7 +92,8 @@ server <- function(input, output, session) {
     if (nchar(video_url) == 0) {
       return(NULL)
     }
-    
+
+    # Regex to get the video ID from a youtube URL; might not have accounted for all scenarios here though, and I didn't want to use somebody else's regex
     video_pattern <- "(?:youtu\\.be/|youtube\\.com/(?:watch\\?v=|embed/|v/|\\S*\\?(?:[^&\\s]*&)*v=))([\\w-]+)"
     video_id <- str_match(video_url, video_pattern)[,2]
     
@@ -122,22 +123,18 @@ server <- function(input, output, session) {
         FALSE  # return FALSE if error
       })
       
-      # If an error occurred, break the loop
       if(!result) {
         break
       }
       
-      # Increment the page index
       page_index <- page_index + 1
     }
     
-    # Return the HTML content
-    html_content
-    
-    # Create a new list, superchats, with the same length as html_content, with contents as NULL
     superchats <- vector("list", length(html_content))
-    
+
+    # Hololyzer data tidier
     for (i in seq_along(html_content)) {
+      # We only want the stuff visible by default, not memberships data
       superchats[[i]] <- html_nodes(html_content[[i]], "#chatarea .visible") %>%
         map_df(function(node) {
           value <- html_text(html_nodes(node, ".table-cell.align-left"))
@@ -155,6 +152,7 @@ server <- function(input, output, session) {
         }) %>%
         drop_na() %>%
         mutate(
+          # Gets a bit messy here
           comment = if_else(
             row_number() %% 3 == 2,
             lead(if_else(row_number() %% 3 == 0, user, NA_character_)),
@@ -163,6 +161,7 @@ server <- function(input, output, session) {
         ) %>%
         filter(row_number() %% 3 == 2) %>%
         mutate(
+          # If a user appears more than once, a number in parentheses is affixed to their name, we want to strip that
           user = if_else(str_detect(user, "\\(\\d+\\)$"), str_remove(user, "\\(\\d+\\)$"), user),
           comment = if_else(comment == "(無言スパチャ)", "wordless superchat", comment),
           comment = if_else(comment == "", "Member emote", comment)
@@ -170,7 +169,7 @@ server <- function(input, output, session) {
         mutate(index = row_number())
     }
     
-    # flatten the list
+    # Flatten the list
     superchats <- bind_rows(superchats) %>%
       mutate(index = row_number()) %>%
       select(index, everything())
@@ -180,7 +179,6 @@ server <- function(input, output, session) {
       group_by(user) %>%
       summarise(superchats = n()) %>%
       left_join(superchats %>% group_by(user) %>% summarise(total_yen = sum(yen)), by = "user")
-    
     total_superchats <- sum(chatter_data$total_yen)
     overview_statement <- paste0("The most generous superchatter was ", chatter_data$user[which.max(chatter_data$total_yen)], ", who contributed ", max(chatter_data$total_yen), " yen or ", round(max(chatter_data$total_yen) / total_superchats * 100, 2), "% of the total superchat value of ", total_superchats, " yen for the stream. The most frequent chatter was ", chatter_data$user[which.max(chatter_data$superchats)], " with ", max(chatter_data$superchats), " superchats, and the overall average superchat value was ", round(mean(chatter_data$total_yen)), " yen.")
     
@@ -195,7 +193,6 @@ server <- function(input, output, session) {
     output$buttons_ui <- renderUI({})
   })
 
-  
   output$superchats_table <- renderTable({
     superchats_data_table <- superchats_data()
     output$buttons_ui <- renderUI({
@@ -206,7 +203,8 @@ server <- function(input, output, session) {
     })
     superchats_data_table$superchats
   })
-  
+
+  # Quick Overview button functionality
   observeEvent(input$overview_btn, {
     superchats_data_table <- superchats_data()
     if (!is.null(superchats_data_table)) {
@@ -215,7 +213,8 @@ server <- function(input, output, session) {
       })
     }
   })
-  
+
+  # Download link functionality
   output$download_csv <- downloadHandler(
     filename = function() {
       video_id <- str_match(input$video_url, "(?:youtu\\.be/|youtube\\.com/(?:watch\\?v=|embed/|v/|\\S*\\?(?:[^&\\s]*&)*v=))([\\w-]+)")[, 2]
