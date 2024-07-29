@@ -4,6 +4,9 @@ A quick and dirty R Shiny app that parses a YouTube URL for a video ID, then scr
 
 I'd like to get more practice with scraping more sites with better packages like Selenium, so I'll try to update this in the future to scrape directly from YouTube (to reduce traffic + server load on Hololyzer, though with the scale of this project it should hopefully still be negligible), and also add plotly visualizations in the near future.
 
+This Shiny app was developed by repurposing and building upon code from a Rmarkdown file I'd previously prepared as an introduction to rvest for webscraping for beginners, [which can be found in its own repository](https://github.com/wattyven/scraping-with-rvest).
+
+
 ## Screenshot
 
 <img src="https://github.com/wattyven/holosupa-scraper/blob/main/HoloSupaScraper.png"/>
