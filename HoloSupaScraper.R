@@ -1,229 +1,199 @@
 library(shiny)
 library(rvest)
-library(tidyverse)
+library(stringr)
+library(purrr)
+library(dplyr)
+library(plotly)
+library(DT)
+library(tidytext)
+library(lubridate)
+library(httr)
+library(jsonlite)
+library(xml2)
 
 ui <- fluidPage(
   tags$head(
-    tags$style(
-      HTML("
-        body {
-          display: flex;
-          justify-content: center;
-          margin: 0;
-        }
-        .container-fluid {
-          max-width: 1200px;
-          width: 100%;
-          align-items: flex-start;
-          padding-top: 20px;
-        }
-        .row {
-          justify-content: center;
-          width: 100%;
-          display: flex;
-          flex-direction: row;
-          align-items: center;
-        }
-        .col-sm-6, .col-sm-8, .col-sm-12 {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          max-width: 100%;
-        }
-        #overview_text {
-          font-family: 'Arial', sans-serif;
-          font-size: 16px;
-          line-height: 1.5;
-          color: #333;
-          margin-bottom: 20px;
-          text-align: center;
-        }
-      ")
-    )
+    tags$style(HTML(
+      ".sidebar { height: calc(100vh - 100px); overflow-y: auto; }
+       .main { height: calc(100vh - 100px); overflow: hidden; }
+       .tab-content, .tab-pane { height: calc(100vh - 300px); overflow-y: auto; }
+       .plotly { height: 100%; }"
+    ))
   ),
-  titlePanel(
-    div(
-      "YouTube SuperChat Analyzer",
-      style = "text-align: center;"
+  titlePanel(div("YouTube SuperChat Analyzer (V2.0)", style = "text-align: center;")),
+  sidebarLayout(
+    sidebarPanel(
+      textInput("video_url", "YouTube Video URL", placeholder = "https://www.youtube.com/watch?v=..."),
+      actionButton("enter_btn", "Fetch Data", class = "btn-primary"),
+      actionButton("clear_btn", "Clear All"),
+      hr(),
+      radioButtons("currency", "Display Currency", choices = c("JPY", "USD"), selected = "JPY", inline = TRUE),
+      uiOutput("filter_ui"),
+      br(),
+      uiOutput("download_ui")
+    ),
+    mainPanel(
+      uiOutput("stream_info"),
+      tabsetPanel(
+        tabPanel("Cumulative Time Series", plotlyOutput("cum_plot", height = "100%")),
+        tabPanel("Amount Distribution", plotlyOutput("dist_plot", height = "100%")),
+        tabPanel("Top Donors", plotlyOutput("leaderboard_plot", height = "100%")),
+        tabPanel("Avg vs Freq", plotlyOutput("scatter_plot", height = "100%")),
+        tabPanel("Word Cloud", plotlyOutput("wordcloud_plot", height = "100%")),
+        tabPanel("Raw Table", DT::dataTableOutput("superchats_table", height = "100%"))
+      )
     )
-  ),
-  mainPanel(
-    fluidRow(
-      column(
-        12, offset = 0,
-        textInput(
-          "video_url",
-          "YouTube Video URL",
-          placeholder = "https://www.youtube.com/watch?v=...",
-          width = "100%"
-        ),
-        div(
-          style = "display: flex; justify-content: space-between;",
-          actionButton("enter_btn", "Enter", class = "btn-primary"),
-          actionButton("clear_btn", "Clear")
-        )
-      )
-    ),
-    fluidRow(
-      column(
-        12, offset = 0,
-        uiOutput("buttons_ui")
-      )
-    ),
-    fluidRow(
-      column(
-        12, offset = 0,
-        htmlOutput("overview_text")
-      )
-    ),
-    fluidRow(
-      column(
-        12, offset = 0,
-        tableOutput("superchats_table")
-      )
-    ),
-    width = 12
   )
 )
 
 server <- function(input, output, session) {
-  superchats_data <- eventReactive(input$enter_btn, {
-    video_url <- input$video_url
-    if (nchar(video_url) == 0) {
-      return(NULL)
-    }
-
-    # Regex to get the video ID from a youtube URL; might not have accounted for all scenarios here though, and I didn't want to use somebody else's regex
-    video_pattern <- "(?:youtu\\.be/|youtube\\.com/(?:watch\\?v=|embed/|v/|\\S*\\?(?:[^&\\s]*&)*v=))([\\w-]+)"
-    video_id <- str_match(video_url, video_pattern)[,2]
-    
-    # Initialize the base URL
-    base_url <- paste0("https://www.hololyzer.net/youtube/archive/superchat/",video_id)
-    
-    # Initialize an empty list to store the HTML content
-    html_content <- list()
-    
-    # Initialize a counter for the page index
-    page_index <- 1
-    
-    # Start a loop that will continue until a 404 error is encountered
-    while(TRUE) {
-      # Construct the URL for the current page
-      if(page_index == 1) {
-        url <- paste0(base_url, ".html")
-      } else {
-        url <- paste0(base_url, "_", page_index, ".html")
-      }
-      
-      # Try to get the HTML content from the page
-      result <- tryCatch({
-        html_content[[page_index]] <- read_html(url)
-        TRUE  # return TRUE if no error
-      }, error = function(e) {
-        FALSE  # return FALSE if error
-      })
-      
-      if(!result) {
-        break
-      }
-      
-      page_index <- page_index + 1
-    }
-    
-    superchats <- vector("list", length(html_content))
-
-    # Hololyzer data tidier
-    for (i in seq_along(html_content)) {
-      # We only want the stuff visible by default, not memberships data
-      superchats[[i]] <- html_nodes(html_content[[i]], "#chatarea .visible") %>%
-        map_df(function(node) {
-          value <- html_text(html_nodes(node, ".table-cell.align-left"))
-          yen_value <- html_text(html_nodes(node, ".table-cell.align-right")) %>%
-            str_remove_all("[^0-9.]") %>%
-            as.integer()
-          yen <- if_else(!is.na(yen_value), yen_value, str_remove_all(value, "[^0-9.]") %>% as.integer())
-          user <- html_text(html_nodes(node, ".align-left"))
-          comment <- if_else(
-            !is.na(html_node(node, ".td.align-left.comment span")),
-            html_text(html_node(node, ".td.align-left.comment span")),
-            html_text(html_node(node, ".td.align-left.comment"))
-          )
-          list(value = value, yen = yen, user = user, comment = comment)
-        }) %>%
-        drop_na() %>%
-        mutate(
-          # Gets a bit messy here
-          comment = if_else(
-            row_number() %% 3 == 2,
-            lead(if_else(row_number() %% 3 == 0, user, NA_character_)),
-            comment
-          )
-        ) %>%
-        filter(row_number() %% 3 == 2) %>%
-        mutate(
-          # If a user appears more than once, a number in parentheses is affixed to their name, we want to strip that
-          user = if_else(str_detect(user, "\\(\\d+\\)$"), str_remove(user, "\\(\\d+\\)$"), user),
-          comment = if_else(comment == "(無言スパチャ)", "wordless superchat", comment),
-          comment = if_else(comment == "", "Member emote", comment)
-        ) %>%
-        mutate(index = row_number())
-    }
-    
-    # Flatten the list
-    superchats <- bind_rows(superchats) %>%
-      mutate(index = row_number()) %>%
-      select(index, everything())
-    
-    # Generate the quick stats overview
-    chatter_data <- superchats %>%
-      group_by(user) %>%
-      summarise(superchats = n()) %>%
-      left_join(superchats %>% group_by(user) %>% summarise(total_yen = sum(yen)), by = "user")
-    total_superchats <- sum(chatter_data$total_yen)
-    overview_statement <- paste0("The most generous superchatter was ", chatter_data$user[which.max(chatter_data$total_yen)], ", who contributed ", max(chatter_data$total_yen), " yen or ", round(max(chatter_data$total_yen) / total_superchats * 100, 2), "% of the total superchat value of ", total_superchats, " yen for the stream. The most frequent chatter was ", chatter_data$user[which.max(chatter_data$superchats)], " with ", max(chatter_data$superchats), " superchats, and the overall average superchat value was ", round(mean(chatter_data$total_yen)), " yen.")
-    
-    # Return a list containing both superchats and overview_statement
-    list(overview_statement = overview_statement, superchats = superchats)
+  # get the JPY / USD exchange rate for the day, not live but updated once per day which is good enough for our purposes
+  rate_data <- eventReactive(input$enter_btn, {
+    req(input$video_url)
+    res <- GET("https://open.er-api.com/v6/latest/USD")
+    content(res, as = "parsed", simplifyDataFrame = TRUE)$rates[["JPY"]]
   })
   
-  observeEvent(input$clear_btn, {
-    updateTextInput(session, "video_url", value = "")
-    output$superchats_table <- renderTable(NULL)
-    output$overview_text <- renderPrint(NULL)
-    output$buttons_ui <- renderUI({})
+  # stream title + thumbnail
+  stream_info <- eventReactive(input$enter_btn, {
+    req(input$video_url)
+    page <- read_html(input$video_url)
+    raw_title <- html_node(page, 'meta[property="og:title"]') %>% html_attr("content")
+    clean_title <- str_replace_all(raw_title, "[^ -~]", "")
+    thumb <- html_node(page, 'meta[property="og:image"]') %>% html_attr("content")
+    list(title = clean_title, thumbnail = thumb)
   })
-
-  output$superchats_table <- renderTable({
-    superchats_data_table <- superchats_data()
-    output$buttons_ui <- renderUI({
-      tagList(
-        actionButton("overview_btn", "Quick Overview", class = "action-button"),
-        downloadLink("download_csv", "Export to CSV")
+  
+  # spaghetti for getting our superchat data
+  superchats_data <- eventReactive(input$enter_btn, {
+    req(input$video_url)
+    vid_pattern <- "(?:youtu\\.be/|youtube\\.com/(?:watch\\?v=|embed/|v/|\\S*\\?(?:[^&\\s]*&)*v=))([\\w-]+)"
+    video_id <- str_match(input$video_url, vid_pattern)[,2]
+    base_url <- paste0("https://www.hololyzer.net/youtube/archive/superchat/", video_id)
+    
+    # in the event we've got a stream with so many superchats that it has multiple pages
+    pages <- list(); p <- 1
+    repeat {
+      url <- if(p == 1) paste0(base_url, ".html") else paste0(base_url, "_", p, ".html")
+      ok <- tryCatch({ pages[[p]] <- read_html(url); TRUE }, error = function(e) FALSE)
+      if(!ok) break
+      p <- p + 1
+    }
+    
+    # this was by far the worst part of this whole ordeal
+    bind_rows(map(pages, function(pg) {
+      html_nodes(pg, "#chatarea .visible.supacha") %>%
+        map_df(function(nd) {
+          cells <- html_nodes(nd, "div.td")
+          ut <- html_text(html_node(cells[2], "span.unixtime_timeLabel")) %>% str_squish() %>% as.numeric()
+          ts <- as.POSIXct(ut/1e6, origin="1970-01-01", tz="UTC") %>% with_tz(Sys.timezone())
+          orig <- html_text(html_node(cells[3], ".table-cell.align-left")) %>% str_squish()
+          yen_txt <- html_text(html_node(cells[3], ".table-cell.align-right")) %>% str_remove_all("[^0-9]")
+          yen <- as.integer(yen_txt); if(is.na(yen)) yen <- str_remove_all(orig, "[^0-9]") %>% as.integer()
+          user <- html_text(cells[6]) %>% str_squish() %>% str_remove_all("\\(\\d+\\)$")
+          
+          raw_comment <- html_text(cells[7]) %>% str_squish()
+          # Translate and retain all chats
+          if(raw_comment == "(無言スパチャ)") comment <- "Wordless superchat"
+          else if(length(html_nodes(cells[7], "img"))>0 && raw_comment == "") comment <- "Member emote"
+          else comment <- raw_comment
+          
+          tibble(timestamp = ts, orig, yen, user, comment)
+        })
+    })) %>%
+      arrange(timestamp) %>%
+      mutate(index = row_number())
+  })
+  
+  # stream info
+  output$stream_info <- renderUI({
+    req(stream_info())
+    info <- stream_info()
+    div(style = "display:flex; align-items:center; margin-bottom:20px;",
+        img(src = info$thumbnail, height = '80px', style = "border-radius:4px;"),
+        tags$h3(info$title, style = "margin-left:15px; font-weight:600;")
+    )
+  })
+  
+  # ui for filtering donos, users etc
+  output$filter_ui <- renderUI({
+    req(superchats_data(), rate_data(), input$currency)
+    df <- superchats_data(); rate <- rate_data()
+    max_val <- if(input$currency=="JPY") max(df$yen, na.rm=TRUE) else round(max(df$yen, na.rm=TRUE)/rate,2)
+    step_amt <- if(input$currency=="JPY") 100 else 0.01
+    tagList(
+      sliderInput("min_amount", "Min Donation", min=0, max=max_val, value=0, step=step_amt),
+      fluidRow(
+        column(8,
+               selectizeInput("select_user", "Select Users", choices=unique(df$user), multiple=TRUE,
+                              options=list(plugins=list('remove_button'), placeholder='Select users...'))
+        ),
+        column(4, actionButton("clear_user", "Clear", style="margin-top:25px"))
       )
-    })
-    superchats_data_table$superchats
+    )
   })
-
-  # Quick Overview button functionality
-  observeEvent(input$overview_btn, {
-    superchats_data_table <- superchats_data()
-    if (!is.null(superchats_data_table)) {
-      output$overview_text <- renderText({
-        superchats_data_table$overview_statement
-      })
-    }
+  
+  observeEvent(input$clear_user, {
+    updateSelectizeInput(session, "select_user", selected = character(0))
   })
-
-  # Download link functionality
+  
+  # for actually implementing the filters
+  filtered <- reactive({
+    req(superchats_data(), rate_data(), input$currency, input$min_amount)
+    df <- superchats_data(); rate <- rate_data()
+    df <- df %>% mutate(amount = if(input$currency=="JPY") yen else round(yen/rate,2)) %>% filter(amount>=input$min_amount)
+    if(!is.null(input$select_user)&&length(input$select_user)>0) df <- df %>% filter(user %in% input$select_user)
+    df
+  })
+  
+  # for exporting to csv
+  output$download_ui <- renderUI({
+    req(superchats_data())
+    downloadButton("download_csv", "Export CSV", class = "btn-success")
+  })
   output$download_csv <- downloadHandler(
-    filename = function() {
-      video_id <- str_match(input$video_url, "(?:youtu\\.be/|youtube\\.com/(?:watch\\?v=|embed/|v/|\\S*\\?(?:[^&\\s]*&)*v=))([\\w-]+)")[, 2]
-      paste0(video_id, ".csv")
-    },
-    content = function(file) {
-      write.csv(superchats_data()$superchats, file, row.names = FALSE)
-    }
+    filename = function() paste0("superchats_", Sys.Date(), ".csv"),
+    content = function(file) write.csv(filtered(), file, row.names = FALSE)
   )
+  
+  # our visualizations!
+  output$cum_plot <- renderPlotly({ # CUMULATIVE
+    df <- filtered() %>% mutate(cumulative=cumsum(amount))
+    plot_ly(df,x=~timestamp,y=~cumulative,type='scatter',mode='lines')%>%
+      layout(title='Cumulative Superchat Value',xaxis=list(title='Time'),yaxis=list(title=input$currency))
+  })
+  
+  output$dist_plot <- renderPlotly({
+    df <- filtered()
+    plot_ly(df,x=~amount,type='histogram',nbinsx=30)%>%
+      layout(title='Donation Distribution',xaxis=list(title=input$currency),yaxis=list(title='Count'))
+  })
+  
+  output$leaderboard_plot <- renderPlotly({
+    df <- filtered()%>%group_by(user)%>%summarise(total=sum(amount,na.rm=TRUE))%>%arrange(desc(total))%>%head(10)
+    plot_ly(df,x=~reorder(user,total),y=~total,type='bar')%>%
+      layout(title='Top 10 Donors',xaxis=list(title='User'),yaxis=list(title=input$currency))
+  })
+  
+  output$scatter_plot <- renderPlotly({
+    df <- filtered()%>%group_by(user)%>%summarise(avg=mean(amount),freq=n())
+    plot_ly(df,x=~freq,y=~avg,text=~user,type='scatter',mode='markers')%>%
+      layout(title='Average vs Frequency',xaxis=list(title='Count',dtick=1),yaxis=list(title=paste('Avg',input$currency)))
+  })
+  
+  output$wordcloud_plot <- renderPlotly({
+    words <- filtered()%>%filter(comment!='Member emote',comment!='Wordless superchat')%>%select(comment)%>%unnest_tokens(word,comment)%>%filter(!word%in%stop_words$word,word!='emote')%>%count(word,sort=TRUE)%>%head(50)%>%mutate(x=runif(n),y=runif(n),size=scales::rescale(n,c(10,50)))
+    plot_ly(words,x=~x,y=~y,text=~word,textfont=list(size=~size),hoverinfo='text',mode='text')%>%
+      layout(title='Word Cloud',xaxis=list(showgrid=FALSE,zeroline=FALSE,showticklabels=FALSE),yaxis=list(showgrid=FALSE,zeroline=FALSE,showticklabels=FALSE))
+  })
+  
+  output$superchats_table <- renderDataTable({
+    filtered()%>%select(timestamp,user,amount,comment)
+  },options=list(pageLength=10,scrollX=TRUE))
+  
+  observeEvent(input$clear_btn,{
+    updateTextInput(session,'video_url','')
+  })
 }
 
-shinyApp(ui = ui, server = server)
+shinyApp(ui, server)
