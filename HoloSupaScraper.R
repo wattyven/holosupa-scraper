@@ -191,8 +191,8 @@ server <- function(input, output, session) {
     filtered()%>%select(timestamp,user,amount,comment)
   },options=list(pageLength=10,scrollX=TRUE))
   
-  observeEvent(input$clear_btn,{
-    updateTextInput(session,'video_url','')
+  observeEvent(input$clear_btn, {
+    session$reload()
   })
 }
 
