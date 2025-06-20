@@ -9,4 +9,6 @@ This Shiny app was developed by repurposing and building upon code from a Rmarkd
 
 ## Screenshot
 
-<img src="https://github.com/wattyven/holosupa-scraper/blob/main/HoloSupaScraper.png"/>
+<img src="https://github.com/wattyven/holosupa-scraper/blob/main/Screenshot1.png"/>
+<br>
+<img src="https://github.com/wattyven/holosupa-scraper/blob/main/Screenshot2.png"/>
